@@ -58,6 +58,8 @@ class _PaymentSelectorPageState extends ConsumerState<PaymentSelectorPage> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final enabledMethods = ref.watch(enabledPaymentMethodsProvider);
+    final gatewayAsync = ref.watch(paymentGatewayConfigsProvider);
+    final isLoadingGateways = gatewayAsync.isLoading;
 
     return Scaffold(
       appBar: AppBar(
@@ -94,6 +96,14 @@ class _PaymentSelectorPageState extends ConsumerState<PaymentSelectorPage> {
             ),
           ),
 
+          // Loading indicator strip — only shows when gateways are being fetched
+          if (isLoadingGateways)
+            LinearProgressIndicator(
+              minHeight: 2,
+              backgroundColor: cs.surface,
+              color: cs.primary,
+            ),
+
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(16),
@@ -120,8 +130,31 @@ class _PaymentSelectorPageState extends ConsumerState<PaymentSelectorPage> {
                       crossAxisSpacing: 10,
                       mainAxisSpacing: 10,
                     ),
-                    itemCount: enabledMethods.length,
+                    // While loading: show 2 offline + 4 skeleton placeholders.
+                    // After load: show actual enabled methods.
+                    itemCount: isLoadingGateways ? 6 : enabledMethods.length,
                     itemBuilder: (ctx, i) {
+                      // First 2 slots are always offline methods — render immediately
+                      if (i < 2) {
+                        final method = isLoadingGateways
+                            ? [PaymentType.cash, PaymentType.bankTransfer][i]
+                            : enabledMethods[i];
+                        final isSelected = _selected == method;
+                        return _PaymentMethodCard(
+                          type: method,
+                          isSelected: isSelected,
+                          onTap: () => setState(() {
+                            _selected = method;
+                            if (method != PaymentType.cash) {
+                              _cashCtrl.clear();
+                            }
+                          }),
+                        );
+                      }
+                      // Remaining slots: skeleton while loading, real cards after
+                      if (isLoadingGateways) {
+                        return _SkeletonPaymentCard(cs: cs);
+                      }
                       final method = enabledMethods[i];
                       final isSelected = _selected == method;
                       return _PaymentMethodCard(
@@ -533,59 +566,10 @@ class _PaymentSelectorPageState extends ConsumerState<PaymentSelectorPage> {
 
       result.fold(
         onSuccess: (txId) async {
-          // Show success notification
           final invoiceNo = InvoiceGenerator.generate(sequence: txId);
 
-          // Show success notification
-          await NotificationService.instance.showPaymentSuccess(
-            invoiceNo,
-            widget.totalAmount,
-          );
-
-          // Open cash drawer for cash payments
-          if (_selected == PaymentType.cash) {
-            await CashDrawerService.openCashDrawer();
-          }
-
-          // Auto-print receipt if printer is configured
-          try {
-            final prefs = await SharedPreferences.getInstance();
-            final mac = prefs.getString('printer_mac');
-            if (mac != null && mac.isNotEmpty) {
-              final txRepo = TransactionRepositoryImpl(db);
-              final settingsRepo = SettingsRepositoryImpl(db);
-              final txResult = await txRepo.getTransactionById(txId);
-              final profile = await settingsRepo.getStoreProfile();
-
-              await txResult.fold(
-                (failure) async =>
-                    debugPrint('Gagal mengambil transaksi untuk auto-print: $failure'),
-                (transaction) async {
-                  final printService = ref.read(printServiceProvider.notifier);
-                  final storeName = profile['store_name'] ?? 'Toko Saya';
-                  final storeAddress = profile['store_address'] ?? '';
-                  final storePhone = profile['store_phone'] ?? '';
-                  final footer = profile['receipt_footer'] ?? 'Terima kasih!';
-                  final paperWidth = profile['printer_paper_width'] ?? '58';
-                  final printLogo = profile['print_logo'] == 'true';
-                  final storeLogoPath = profile['store_logo'];
-
-                  await printService.printReceipt(
-                    transaction: transaction,
-                    storeName: storeName,
-                    storeAddress: storeAddress,
-                    storePhone: storePhone,
-                    receiptFooter: footer,
-                    paperWidth: paperWidth,
-                    printLogo: printLogo,
-                    storeLogoPath: storeLogoPath,
-                  );
-                },
-              );
-            }
-          } catch (e) {
-            debugPrint('Auto-print error: $e');
-          }
+          // Run printer, notifications, and cash drawer in the background without awaiting them
+          _runPostPaymentTasks(txId, invoiceNo);
 
           if (mounted) {
             _showSuccessDialog(txId, invoiceNo);
@@ -608,6 +592,65 @@ class _PaymentSelectorPageState extends ConsumerState<PaymentSelectorPage> {
           ),
         );
       }
+    }
+  }
+
+  void _runPostPaymentTasks(int txId, String invoiceNo) {
+    // 1. Show notification in background
+    NotificationService.instance.showPaymentSuccess(
+      invoiceNo,
+      widget.totalAmount,
+    ).catchError((e) => debugPrint('Post-payment notification error: $e'));
+
+    // 2. Open cash drawer in background
+    if (_selected == PaymentType.cash) {
+      CashDrawerService.openCashDrawer()
+          .catchError((e) => debugPrint('Post-payment cash drawer error: $e'));
+    }
+
+    // 3. Auto-print receipt in background
+    _autoPrintReceiptInBackground(txId);
+  }
+
+  void _autoPrintReceiptInBackground(int txId) async {
+    try {
+      final db = ref.read(databaseProvider);
+      final prefs = await SharedPreferences.getInstance();
+      final mac = prefs.getString('printer_mac');
+      if (mac != null && mac.isNotEmpty) {
+        final txRepo = TransactionRepositoryImpl(db);
+        final settingsRepo = SettingsRepositoryImpl(db);
+        final txResult = await txRepo.getTransactionById(txId);
+        final profile = await settingsRepo.getStoreProfile();
+
+        await txResult.fold(
+          (failure) async =>
+              debugPrint('Gagal mengambil transaksi untuk auto-print: $failure'),
+          (transaction) async {
+            final printService = ref.read(printServiceProvider.notifier);
+            final storeName = profile['store_name'] ?? 'Toko Saya';
+            final storeAddress = profile['store_address'] ?? '';
+            final storePhone = profile['store_phone'] ?? '';
+            final footer = profile['receipt_footer'] ?? 'Terima kasih!';
+            final paperWidth = profile['printer_paper_width'] ?? '58';
+            final printLogo = profile['print_logo'] == 'true';
+            final storeLogoPath = profile['store_logo'];
+
+            await printService.printReceipt(
+              transaction: transaction,
+              storeName: storeName,
+              storeAddress: storeAddress,
+              storePhone: storePhone,
+              receiptFooter: footer,
+              paperWidth: paperWidth,
+              printLogo: printLogo,
+              storeLogoPath: storeLogoPath,
+            );
+          },
+        );
+      }
+    } catch (e) {
+      debugPrint('Auto-print error: $e');
     }
   }
 
@@ -687,6 +730,76 @@ class _PaymentMethodCard extends StatelessWidget {
               textAlign: TextAlign.center,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+// ── Skeleton Payment Card (loading placeholder) ───────────────────────────────
+
+class _SkeletonPaymentCard extends StatefulWidget {
+  const _SkeletonPaymentCard({required this.cs});
+  final ColorScheme cs;
+
+  @override
+  State<_SkeletonPaymentCard> createState() => _SkeletonPaymentCardState();
+}
+
+class _SkeletonPaymentCardState extends State<_SkeletonPaymentCard>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+    _anim = Tween<double>(begin: 0.3, end: 0.7).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (_, __) => Container(
+        decoration: BoxDecoration(
+          color: widget.cs.surfaceContainerHighest.withValues(alpha: _anim.value),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: widget.cs.outlineVariant),
+        ),
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: widget.cs.outlineVariant.withValues(alpha: _anim.value),
+                borderRadius: BorderRadius.circular(6),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Container(
+              width: 50,
+              height: 9,
+              decoration: BoxDecoration(
+                color: widget.cs.outlineVariant.withValues(alpha: _anim.value),
+                borderRadius: BorderRadius.circular(4),
+              ),
             ),
           ],
         ),

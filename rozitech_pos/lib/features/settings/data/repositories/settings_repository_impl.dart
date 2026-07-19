@@ -97,6 +97,16 @@ class SettingsRepositoryImpl {
     };
   }
 
+  /// Returns ALL settings as a flat map — single DB read, then fully cached.
+  /// Use this for bulk reads (e.g. payment gateway configs) to avoid
+  /// multiple sequential async calls.
+  Future<Map<String, String?>> getAllSettings() async {
+    await _ensureLoaded();
+    // Return a copy of the internal cache map
+    return Map<String, String?>.from(_cache._cache);
+  }
+
+
   Future<void> saveStoreProfile({
     required String name,
     required String address,

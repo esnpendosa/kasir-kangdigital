@@ -2,7 +2,7 @@ import 'package:equatable/equatable.dart';
 import 'transaction_item.dart';
 
 /// Payment method options.
-enum PaymentMethod { cash, card, transfer }
+enum PaymentMethod { cash, card, transfer, qris, midtrans, qopay, shopee }
 
 extension PaymentMethodX on PaymentMethod {
   String get label {
@@ -13,6 +13,14 @@ extension PaymentMethodX on PaymentMethod {
         return 'Kartu';
       case PaymentMethod.transfer:
         return 'Transfer';
+      case PaymentMethod.qris:
+        return 'QRIS';
+      case PaymentMethod.midtrans:
+        return 'Midtrans';
+      case PaymentMethod.qopay:
+        return 'Qopay';
+      case PaymentMethod.shopee:
+        return 'ShopeePay';
     }
   }
   String get value => name;

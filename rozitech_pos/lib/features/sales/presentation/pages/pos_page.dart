@@ -99,7 +99,10 @@ class _NarrowLayout extends ConsumerWidget {
             height: MediaQuery.sizeOf(context).height * 0.75,
             child: Material(
               borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-              child: CartPanel(cartState: cartState),
+              child: CartPanel(
+                cartState: cartState,
+                onCheckoutSuccess: onToggleCart,
+              ),
             ).animate().slideY(begin: 1, curve: Curves.easeOutCubic),
           ),
       ],
@@ -160,6 +163,48 @@ class _ProductSectionState extends ConsumerState<_ProductSection> {
                 controller: _searchCtrl,
                 onChanged: (v) =>
                     ref.read(posSearchProvider.notifier).state = v,
+                onSubmitted: (value) async {
+                  final query = value.trim();
+                  if (query.isEmpty) return;
+
+                  final repo = ref.read(productRepositoryProvider);
+                  final product = await repo.getByBarcode(query);
+
+                  if (product != null) {
+                    ref.read(cartProvider.notifier).addProduct(product);
+                    HapticFeedback.lightImpact();
+                    _searchCtrl.clear();
+                    ref.read(posSearchProvider.notifier).state = '';
+
+                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('${product.name} ditambahkan ke keranjang'),
+                        backgroundColor: Colors.green,
+                        duration: const Duration(seconds: 1),
+                      ),
+                    );
+                  } else {
+                    final isBarcode = RegExp(r'^\d+$').hasMatch(query) && query.length >= 6;
+                    if (isBarcode) {
+                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Produk dengan barcode "$query" tidak ditemukan'),
+                          backgroundColor: Colors.orange,
+                          duration: const Duration(seconds: 4),
+                          action: SnackBarAction(
+                            label: 'Tutup',
+                            textColor: Colors.white,
+                            onPressed: () {
+                              ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                            },
+                          ),
+                        ),
+                      );
+                    }
+                  }
+                },
                 decoration: InputDecoration(
                   hintText: 'Cari produk atau scan barcode...',
                   prefixIcon: const Icon(Icons.search_rounded),
@@ -220,66 +265,31 @@ class _ProductSectionState extends ConsumerState<_ProductSection> {
 
     if (result == null || result.isEmpty) return;
 
-    // Look up product by barcode
-    final repo = ref.read(productRepositoryProvider);
-    final product = await repo.getByBarcode(result);
-
-    if (!mounted) return;
-
-    if (product == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Produk dengan barcode "$result" tidak ditemukan'),
-          backgroundColor: Colors.orange,
-          action: SnackBarAction(
-            label: 'Cari Manual',
-            onPressed: () {
-              _searchCtrl.text = result;
-              ref.read(posSearchProvider.notifier).state = result;
-            },
-          ),
-        ),
-      );
-    } else {
-      // Add to cart
-      ref.read(cartProvider.notifier).addProduct(product);
-      HapticFeedback.lightImpact();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const Icon(Icons.check_circle_rounded,
-                  color: Colors.white, size: 18),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '${product.name} ditambahkan ke keranjang',
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          backgroundColor: Colors.green,
-          duration: const Duration(seconds: 1),
-        ),
-      );
+    if (mounted) {
+      _searchCtrl.text = result;
+      ref.read(posSearchProvider.notifier).state = result;
     }
   }
 }
 
 // ─── Barcode Scanner Bottom Sheet ─────────────────────────────────────────────
-class _BarcodeScannerSheet extends StatefulWidget {
+class _BarcodeScannerSheet extends ConsumerStatefulWidget {
   const _BarcodeScannerSheet();
 
   @override
-  State<_BarcodeScannerSheet> createState() => _BarcodeScannerSheetState();
+  ConsumerState<_BarcodeScannerSheet> createState() => _BarcodeScannerSheetState();
 }
 
-class _BarcodeScannerSheetState extends State<_BarcodeScannerSheet> {
+class _BarcodeScannerSheetState extends ConsumerState<_BarcodeScannerSheet> {
   MobileScannerController? _controller;
   bool _isFlashOn = false;
-  bool _scanned = false;
   bool _isFrontCamera = false;
+
+  bool _processing = false;
+  String? _successMessage;
+  String? _errorMessage;
+  String? _lastScannedBarcode;
+  DateTime? _lastScanTime;
 
   @override
   void initState() {
@@ -298,24 +308,79 @@ class _BarcodeScannerSheetState extends State<_BarcodeScannerSheet> {
   }
 
   void _onDetect(BarcodeCapture capture) {
-    if (_scanned) return;
+    if (_processing) return;
     final barcodes = capture.barcodes;
     if (barcodes.isEmpty) return;
     final raw = barcodes.first.rawValue;
     if (raw == null || raw.isEmpty) return;
 
-    setState(() => _scanned = true);
-    HapticFeedback.mediumImpact();
-    Navigator.of(context).pop(raw);
+    // Cooldown logic for the same barcode (e.g. 2 seconds)
+    final now = DateTime.now();
+    if (_lastScannedBarcode == raw && _lastScanTime != null) {
+      if (now.difference(_lastScanTime!) < const Duration(seconds: 2)) {
+        return;
+      }
+    }
+
+    _lastScannedBarcode = raw;
+    _lastScanTime = now;
+
+    _processBarcode(raw);
+  }
+
+  void _processBarcode(String raw) async {
+    setState(() {
+      _processing = true;
+      _successMessage = null;
+      _errorMessage = null;
+    });
+
+    try {
+      final repo = ref.read(productRepositoryProvider);
+      final product = await repo.getByBarcode(raw);
+
+      if (product == null) {
+        HapticFeedback.heavyImpact();
+        setState(() {
+          _errorMessage = raw;
+          _processing = false;
+        });
+      } else {
+        ref.read(cartProvider.notifier).addProduct(product);
+        HapticFeedback.mediumImpact();
+        setState(() {
+          _successMessage = '${product.name} ditambahkan';
+          _processing = false;
+        });
+
+        // Auto-clear success message after 1.5 seconds
+        Future.delayed(const Duration(milliseconds: 1500), () {
+          if (mounted) {
+            setState(() {
+              if (_successMessage == '${product.name} ditambahkan') {
+                _successMessage = null;
+              }
+            });
+          }
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Error: $e';
+          _processing = false;
+        });
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Container(
       height: MediaQuery.sizeOf(context).height * 0.75,
-      decoration: BoxDecoration(
+      decoration: const BoxDecoration(
         color: Colors.black,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: Column(
         children: [
@@ -381,6 +446,92 @@ class _BarcodeScannerSheetState extends State<_BarcodeScannerSheet> {
                 ),
                 // Scan overlay
                 _ScanOverlay(),
+
+                // Status HUD overlay
+                if (_successMessage != null)
+                  Positioned(
+                    top: 20,
+                    left: 20,
+                    right: 20,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withValues(alpha: 0.9),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              _successMessage!,
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ).animate().fadeIn(duration: 200.ms).slideY(begin: -0.2, end: 0, duration: 200.ms),
+                  ),
+
+                if (_errorMessage != null)
+                  Positioned(
+                    bottom: 20,
+                    left: 20,
+                    right: 20,
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withValues(alpha: 0.95),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.warning_rounded, color: Colors.white, size: 20),
+                              const SizedBox(width: 8),
+                              const Expanded(
+                                child: Text(
+                                  'Produk Tidak Ditemukan',
+                                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 20),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                onPressed: () {
+                                  setState(() => _errorMessage = null);
+                                },
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Produk dengan barcode "${_errorMessage}" tidak ditemukan.',
+                            style: const TextStyle(color: Colors.white, fontSize: 13),
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              TextButton(
+                                style: TextButton.styleFrom(foregroundColor: Colors.white),
+                                onPressed: () {
+                                  final barcode = _errorMessage!;
+                                  Navigator.of(context).pop(barcode);
+                                },
+                                child: const Text('Cari Manual'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ).animate().fadeIn(duration: 200.ms).slideY(begin: 0.2, end: 0, duration: 200.ms),
+                  ),
               ],
             ),
           ),
@@ -406,9 +557,8 @@ class _BarcodeScannerSheetState extends State<_BarcodeScannerSheet> {
                     Expanded(
                       child: _ManualBarcodeInput(
                         onSubmit: (value) {
-                          if (value.isNotEmpty && !_scanned) {
-                            setState(() => _scanned = true);
-                            Navigator.of(context).pop(value);
+                          if (value.isNotEmpty && !_processing) {
+                            _processBarcode(value);
                           }
                         },
                       ),

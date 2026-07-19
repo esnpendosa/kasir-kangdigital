@@ -6,56 +6,61 @@ import '../../domain/entities/payment_method_config.dart';
 // ── Payment gateway config providers ─────────────────────────────────────────
 
 /// Loads all payment gateway configs from the settings table.
+///
+/// Performance fix: uses a single batch load via [SettingsRepositoryImpl]
+/// which reads all rows at once and caches them in memory, instead of
+/// making 10 separate sequential DB queries.
 final paymentGatewayConfigsProvider =
     FutureProvider<List<PaymentGatewayConfig>>((ref) async {
   final db = ref.watch(appDatabaseProvider);
   final repo = SettingsRepositoryImpl(db);
 
-  final midtransEnabled = await repo.getBool('gw_midtrans_enabled');
-  final midtransServerKey = await repo.getString('gw_midtrans_server_key');
-  final midtransClientKey = await repo.getString('gw_midtrans_client_key');
-  final midtransProd = await repo.getBool('gw_midtrans_production');
+  // Single batch read — loads the entire settings table once and caches it.
+  // Subsequent getBool/getString calls are synchronous cache hits.
+  final all = await repo.getAllSettings();
 
-  final qrisEnabled = await repo.getBool('gw_qris_enabled');
-  final qrisMerchantId = await repo.getString('gw_qris_merchant_id');
-
-  final qopayEnabled = await repo.getBool('gw_qopay_enabled');
-  final qopayApiKey = await repo.getString('gw_qopay_api_key');
-
-  final shopeeEnabled = await repo.getBool('gw_shopee_enabled');
-  final shopeeApiKey = await repo.getString('gw_shopee_api_key');
+  bool flag(String key) => all[key] == 'true';
+  String str(String key) => all[key] ?? '';
 
   return [
     PaymentGatewayConfig(
       type: PaymentType.midtrans,
-      isEnabled: midtransEnabled,
-      serverKey: midtransServerKey.isEmpty ? null : midtransServerKey,
-      clientKey: midtransClientKey.isEmpty ? null : midtransClientKey,
-      isProduction: midtransProd,
+      isEnabled: flag('gw_midtrans_enabled'),
+      serverKey: str('gw_midtrans_server_key').isEmpty
+          ? null
+          : str('gw_midtrans_server_key'),
+      clientKey: str('gw_midtrans_client_key').isEmpty
+          ? null
+          : str('gw_midtrans_client_key'),
+      isProduction: flag('gw_midtrans_production'),
     ),
     PaymentGatewayConfig(
       type: PaymentType.qrisDynamic,
-      isEnabled: qrisEnabled,
-      merchantId: qrisMerchantId.isEmpty ? null : qrisMerchantId,
+      isEnabled: flag('gw_qris_enabled'),
+      merchantId: str('gw_qris_merchant_id').isEmpty
+          ? null
+          : str('gw_qris_merchant_id'),
     ),
     PaymentGatewayConfig(
       type: PaymentType.qopay,
-      isEnabled: qopayEnabled,
-      apiKey: qopayApiKey.isEmpty ? null : qopayApiKey,
+      isEnabled: flag('gw_qopay_enabled'),
+      apiKey: str('gw_qopay_api_key').isEmpty ? null : str('gw_qopay_api_key'),
     ),
     PaymentGatewayConfig(
       type: PaymentType.shopee,
-      isEnabled: shopeeEnabled,
-      apiKey: shopeeApiKey.isEmpty ? null : shopeeApiKey,
+      isEnabled: flag('gw_shopee_enabled'),
+      apiKey:
+          str('gw_shopee_api_key').isEmpty ? null : str('gw_shopee_api_key'),
     ),
   ];
 });
 
 /// Only returns enabled payment gateway configurations.
-final enabledPaymentMethodsProvider =
-    Provider<List<PaymentType>>((ref) {
-  // Always include offline methods
-  final always = [PaymentType.cash, PaymentType.bankTransfer];
+/// Always includes offline methods (cash + bank transfer) immediately,
+/// even while online gateway configs are still loading.
+final enabledPaymentMethodsProvider = Provider<List<PaymentType>>((ref) {
+  // Always include offline methods — available instantly, no async wait.
+  const always = [PaymentType.cash, PaymentType.bankTransfer];
 
   final configsAsync = ref.watch(paymentGatewayConfigsProvider);
   final online = configsAsync.maybeWhen(

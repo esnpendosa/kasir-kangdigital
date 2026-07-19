@@ -8,40 +8,26 @@ import '../../../../core/providers/database_provider.dart';
 import '../../../../core/utils/extensions.dart';
 import '../../../../routes/app_router.dart';
 import '../../data/repositories/cart_repository.dart';
-import 'pos_numpad.dart';
-import '../../../settings/data/repositories/settings_repository_impl.dart';
-
 /// Shopping cart panel — shown right side on tablet, bottom sheet on mobile.
 class CartPanel extends ConsumerStatefulWidget {
-  const CartPanel({super.key, required this.cartState});
+  const CartPanel({
+    super.key,
+    required this.cartState,
+    this.onCheckoutSuccess,
+  });
+
   final CartState cartState;
+  final VoidCallback? onCheckoutSuccess;
 
   @override
   ConsumerState<CartPanel> createState() => _CartPanelState();
 }
 
 class _CartPanelState extends ConsumerState<CartPanel> {
-  bool _showNumpad = false;
-  final _cashCtrl = TextEditingController();
-
-  @override
-  void dispose() {
-    _cashCtrl.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final cart = widget.cartState;
-    final profileAsync = ref.watch(storeProfileProvider);
-    final profile = profileAsync.value ?? const {};
-
-    final bankName = profile['payment_bank_name'] ?? 'BCA';
-    final bankAccount = profile['payment_bank_account'] ?? '8730129031';
-    final bankRecipient = profile['payment_bank_recipient'] ?? 'Kasir Kita';
-    final qrisMerchant = profile['qris_merchant_name'] ?? 'Kasir Kita Gateway';
-    final qrisNmid = profile['qris_nmid'] ?? 'ID1020304050';
 
     return Container(
       color: cs.surface,
@@ -107,10 +93,46 @@ class _CartPanelState extends ConsumerState<CartPanel> {
                 const Divider(height: 8),
                 const SizedBox(height: 8),
                 _summaryRow(context, 'Subtotal', cart.subtotal.toCurrency()),
-                if (cart.globalDiscount > 0)
-                  _summaryRow(context, 'Diskon (${cart.globalDiscount.toStringAsFixed(0)}%)',
-                      '-${cart.globalDiscountAmount.toCurrency()}',
-                      color: Colors.green),
+                InkWell(
+                  onTap: () => _showDiscountDialog(context),
+                  borderRadius: BorderRadius.circular(6),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              'Diskon (${cart.globalDiscount.toStringAsFixed(0)}%)',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: cart.globalDiscount > 0 ? Colors.green : cs.onSurface.withValues(alpha: 0.6),
+                                fontWeight: cart.globalDiscount > 0 ? FontWeight.bold : FontWeight.normal,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.edit_rounded,
+                              size: 14,
+                              color: cart.globalDiscount > 0 ? Colors.green : cs.onSurface.withValues(alpha: 0.4),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          cart.globalDiscount > 0
+                              ? '-${cart.globalDiscountAmount.toCurrency()}'
+                              : 'Rp 0',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: cart.globalDiscount > 0 ? Colors.green : cs.onSurface.withValues(alpha: 0.6),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
                 if (cart.taxRate > 0)
                   _summaryRow(context, 'Pajak (${cart.taxRate.toStringAsFixed(0)}%)',
                       cart.taxAmount.toCurrency()),
@@ -122,176 +144,21 @@ class _CartPanelState extends ConsumerState<CartPanel> {
                   isBold: true,
                   fontSize: 18,
                 ),
-                                // Payment Method Selector
-                Row(
-                  children: [
-                    const Text('Metode:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          children: [
-                            _buildPaymentMethodOption('cash', 'Tunai', Icons.payments_rounded),
-                            const SizedBox(width: 4),
-                            _buildPaymentMethodOption('transfer', 'Transfer', Icons.account_balance_rounded),
-                            const SizedBox(width: 4),
-                            _buildPaymentMethodOption('qris', 'QRIS/Gateway', Icons.qr_code_2_rounded),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-
-                // Conditional Payment input/display
-                if (cart.paymentMethod == 'cash') ...[
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _cashCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: 'Tunai',
-                            prefixText: 'Rp ',
-                            prefixIcon: Icon(Icons.payments_rounded),
-                          ),
-                          onChanged: (v) {
-                            final amount = double.tryParse(v) ?? 0;
-                            ref
-                                .read(cartProvider.notifier)
-                                .setCashAmount(amount);
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filled(
-                        onPressed: () =>
-                            setState(() => _showNumpad = !_showNumpad),
-                        icon: const Icon(Icons.dialpad_rounded),
-                        tooltip: 'Numpad',
-                      ),
-                    ],
-                  ),
-                ] else if (cart.paymentMethod == 'transfer') ...[
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: cs.primary.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: cs.primary.withValues(alpha: 0.2)),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.account_balance_rounded, color: cs.primary),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('Transfer Bank (Manual)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                              const SizedBox(height: 2),
-                              Text('$bankName: $bankAccount a/n $bankRecipient', style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ] else if (cart.paymentMethod == 'qris') ...[
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.green.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.green.withValues(alpha: 0.2)),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.qr_code_2_rounded, color: Colors.green),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('QRIS: $qrisMerchant', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.green)),
-                              const SizedBox(height: 2),
-                              Text('NMID: $qrisNmid', style: const TextStyle(fontSize: 11, color: Colors.black54)),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                if (cart.cashAmount > 0 && cart.cashAmount >= cart.total) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.green.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                          color: Colors.green.withValues(alpha: 0.3)),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.change_circle_rounded,
-                            color: Colors.green, size: 18),
-                        const SizedBox(width: 8),
-                        Text('Kembalian: ',
-                            style: const TextStyle(fontSize: 13)),
-                        Text(
-                          cart.change.toCurrency(),
-                          style: const TextStyle(
-                            color: Colors.green,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-
-                const SizedBox(height: 12),
-
-                // Numpad
-                if (_showNumpad)
-                  PosNumpad(
-                    onKey: (key) {
-                      if (key == '⌫') {
-                        final text = _cashCtrl.text;
-                        if (text.isNotEmpty) {
-                          _cashCtrl.text =
-                              text.substring(0, text.length - 1);
-                        }
-                      } else if (key == '✓') {
-                        setState(() => _showNumpad = false);
-                      } else {
-                        _cashCtrl.text += key;
-                      }
-                      final amount =
-                          double.tryParse(_cashCtrl.text) ?? 0;
-                      ref
-                          .read(cartProvider.notifier)
-                          .setCashAmount(amount);
-                    },
-                  ),
+                const SizedBox(height: 16),
 
                 // Checkout button — opens full Payment Selector
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
                     onPressed: cart.items.isNotEmpty
-                        ? () => context.push(
+                        ? () async {
+                            final success = await context.push<bool>(
                               '${AppRoutes.payment}?total=${cart.total.toStringAsFixed(0)}',
-                            )
+                            );
+                            if (success == true && widget.onCheckoutSuccess != null) {
+                              widget.onCheckoutSuccess!();
+                            }
+                          }
                         : null,
                     icon: const Icon(Icons.check_circle_rounded),
                     label: const Text('Bayar Sekarang'),
@@ -310,34 +177,6 @@ class _CartPanelState extends ConsumerState<CartPanel> {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildPaymentMethodOption(String method, String label, IconData icon) {
-    final cart = widget.cartState;
-    final isSelected = cart.paymentMethod == method;
-    final cs = Theme.of(context).colorScheme;
-
-    return ChoiceChip(
-      iconTheme: IconThemeData(color: isSelected ? Colors.white : cs.onSurfaceVariant),
-      avatar: Icon(icon, size: 16),
-      label: Text(label),
-      selected: isSelected,
-      onSelected: (selected) {
-        if (selected) {
-          ref.read(cartProvider.notifier).setPaymentMethod(method);
-          if (method != 'cash') {
-            _cashCtrl.clear();
-            ref.read(cartProvider.notifier).setCashAmount(0);
-          }
-        }
-      },
-      selectedColor: cs.primary,
-      labelStyle: TextStyle(
-        color: isSelected ? Colors.white : cs.onSurfaceVariant,
-        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-        fontSize: 11,
       ),
     );
   }
@@ -537,9 +376,21 @@ class _CartPanelState extends ConsumerState<CartPanel> {
                         'Pilih Pelanggan / Member',
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.close_rounded),
-                        onPressed: () => Navigator.pop(ctx),
+                      Row(
+                        children: [
+                          TextButton.icon(
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              context.push(AppRoutes.customers);
+                            },
+                            icon: const Icon(Icons.settings_rounded, size: 16),
+                            label: const Text('Kelola', style: TextStyle(fontSize: 12)),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close_rounded),
+                            onPressed: () => Navigator.pop(ctx),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -719,6 +570,59 @@ class _CartPanelState extends ConsumerState<CartPanel> {
                 }
               },
               child: const Text('Simpan & Pilih'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showDiscountDialog(BuildContext context) {
+    final cart = widget.cartState;
+    final discountCtrl = TextEditingController(
+      text: cart.globalDiscount > 0 ? cart.globalDiscount.toStringAsFixed(0) : '',
+    );
+    final formKey = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Atur Diskon Global (%)'),
+          content: Form(
+            key: formKey,
+            child: TextFormField(
+              controller: discountCtrl,
+              keyboardType: TextInputType.number,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Persentase Diskon',
+                suffixText: '%',
+                border: OutlineInputBorder(),
+              ),
+              validator: (v) {
+                if (v == null || v.isEmpty) return null;
+                final val = double.tryParse(v);
+                if (val == null || val < 0 || val > 100) {
+                  return 'Masukkan angka 0 - 100';
+                }
+                return null;
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Batal'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (!formKey.currentState!.validate()) return;
+                final val = double.tryParse(discountCtrl.text) ?? 0;
+                ref.read(cartProvider.notifier).setGlobalDiscount(val);
+                Navigator.pop(ctx);
+              },
+              child: const Text('Terapkan'),
             ),
           ],
         );

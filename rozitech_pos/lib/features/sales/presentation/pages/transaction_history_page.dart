@@ -280,15 +280,18 @@ class _TransactionHistoryPageState
                   const Text('Metode Pembayaran',
                       style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
                   const SizedBox(height: 8),
-                  Row(
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
                       _buildPaymentChip(ref, notifier, null, 'Semua', cs),
-                      const SizedBox(width: 8),
                       _buildPaymentChip(ref, notifier, 'cash', 'Tunai', cs),
-                      const SizedBox(width: 8),
-                      _buildPaymentChip(ref, notifier, 'card', 'Kartu', cs),
-                      const SizedBox(width: 8),
                       _buildPaymentChip(ref, notifier, 'transfer', 'Transfer', cs),
+                      _buildPaymentChip(ref, notifier, 'qris', 'QRIS', cs),
+                      _buildPaymentChip(ref, notifier, 'midtrans', 'Midtrans', cs),
+                      _buildPaymentChip(ref, notifier, 'qopay', 'Qopay', cs),
+                      _buildPaymentChip(ref, notifier, 'shopee', 'ShopeePay', cs),
+                      _buildPaymentChip(ref, notifier, 'card', 'Kartu', cs),
                     ],
                   ),
                   const SizedBox(height: 32),
@@ -320,17 +323,15 @@ class _TransactionHistoryPageState
     final filter = ref.watch(_filterProvider);
     final isSelected = filter.paymentMethod == value;
 
-    return Expanded(
-      child: ChoiceChip(
-        label: Text(label, style: const TextStyle(fontSize: 12)),
-        selected: isSelected,
-        showCheckmark: false,
-        onSelected: (selected) {
-          if (selected) {
-            notifier.setPaymentMethod(value);
-          }
-        },
-      ),
+    return ChoiceChip(
+      label: Text(label, style: const TextStyle(fontSize: 12)),
+      selected: isSelected,
+      showCheckmark: false,
+      onSelected: (selected) {
+        if (selected) {
+          notifier.setPaymentMethod(value);
+        }
+      },
     );
   }
 }
@@ -354,6 +355,7 @@ class _TransactionTile extends ConsumerWidget {
           border: Border.all(color: cs.outlineVariant),
         ),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Container(
               width: 44,
@@ -375,54 +377,77 @@ class _TransactionTile extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(tx.transactionNumber,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w700, fontSize: 13)),
-                  Text(
-                    '${tx.items.length} item · ${tx.paymentMethod.label}',
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: cs.onSurface.withValues(alpha: 0.5)),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          tx.transactionNumber,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        tx.total.toCurrency(),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                          color: isVoid
+                              ? cs.onSurface.withValues(alpha: 0.4)
+                              : cs.onSurface,
+                          decoration: isVoid ? TextDecoration.lineThrough : null,
+                        ),
+                      ),
+                    ],
                   ),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${tx.items.length} item · ${tx.paymentMethod.label}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: cs.onSurface.withValues(alpha: 0.5),
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        tx.createdAt.toDateTimeString(),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: cs.onSurface.withValues(alpha: 0.4),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (isVoid) ...[
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text('VOID',
+                          style: TextStyle(
+                              color: Colors.red,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700)),
+                    ),
+                  ],
                 ],
               ),
             ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  tx.total.toCurrency(),
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
-                    color: isVoid
-                        ? cs.onSurface.withValues(alpha: 0.4)
-                        : cs.onSurface,
-                    decoration: isVoid ? TextDecoration.lineThrough : null,
-                  ),
-                ),
-                Text(tx.createdAt.toDateTimeString(),
-                    style: TextStyle(
-                        fontSize: 11,
-                        color: cs.onSurface.withValues(alpha: 0.4))),
-                if (isVoid)
-                  Container(
-                    margin: const EdgeInsets.only(top: 2),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 6, vertical: 1),
-                    decoration: BoxDecoration(
-                      color: Colors.red.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: const Text('VOID',
-                        style: TextStyle(
-                            color: Colors.red,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700)),
-                  ),
-              ],
-            ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 4),
             const Icon(Icons.chevron_right_rounded, size: 18),
           ],
         ),
@@ -569,6 +594,9 @@ void _showTransactionDetails(BuildContext context, WidgetRef ref, SalesTransacti
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
                       onPressed: () {
                         Navigator.pop(context);
                         showDialog(
@@ -577,7 +605,7 @@ void _showTransactionDetails(BuildContext context, WidgetRef ref, SalesTransacti
                         );
                       },
                       icon: const Icon(Icons.local_shipping_rounded),
-                      label: const Text('Cetak Resi Pengiriman'),
+                      label: const Text('Cetak Resi'),
                     ),
                   ),
                   if (!isVoid) ...[
@@ -587,6 +615,7 @@ void _showTransactionDetails(BuildContext context, WidgetRef ref, SalesTransacti
                         style: OutlinedButton.styleFrom(
                           foregroundColor: Colors.red,
                           side: const BorderSide(color: Colors.red),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
                         ),
                         onPressed: () => _voidTransaction(context, ref, tx),
                         icon: const Icon(Icons.cancel_rounded),

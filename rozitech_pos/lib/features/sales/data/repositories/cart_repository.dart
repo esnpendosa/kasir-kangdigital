@@ -73,6 +73,7 @@ class CartState {
   CartState copyWith({
     List<CartItem>? items,
     int? customerId,
+    bool clearCustomer = false,
     double? globalDiscount,
     double? taxRate,
     double? cashAmount,
@@ -81,7 +82,7 @@ class CartState {
   }) {
     return CartState(
       items: items ?? this.items,
-      customerId: customerId ?? this.customerId,
+      customerId: clearCustomer ? null : (customerId ?? this.customerId),
       globalDiscount: globalDiscount ?? this.globalDiscount,
       taxRate: taxRate ?? this.taxRate,
       cashAmount: cashAmount ?? this.cashAmount,
@@ -151,7 +152,10 @@ class CartNotifier extends Notifier<CartState> {
   void setPaymentMethod(String method) =>
       state = state.copyWith(paymentMethod: method);
 
-  void setCustomer(int? id) => state = state.copyWith(customerId: id);
+  void setCustomer(int? id) => state = state.copyWith(
+        customerId: id,
+        clearCustomer: id == null,
+      );
 
   void setNotes(String notes) => state = state.copyWith(notes: notes);
 
