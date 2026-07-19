@@ -1,0 +1,47 @@
+# Root level archives
+kangdigital_web.zip
+.kiro/
+
+# Laravel - Web Backend gitignore
+kangdigital_web/.env
+kangdigital_web/vendor/
+kangdigital_web/node_modules/
+kangdigital_web/bootstrap/cache/*
+!kangdigital_web/bootstrap/cache/.gitkeep
+kangdigital_web/storage/*.key
+kangdigital_web/storage/framework/cache/data/*
+!kangdigital_web/storage/framework/cache/data/.gitkeep
+kangdigital_web/storage/framework/sessions/*
+!kangdigital_web/storage/framework/sessions/.gitkeep
+kangdigital_web/storage/framework/testing/*
+!kangdigital_web/storage/framework/testing/.gitkeep
+kangdigital_web/storage/framework/views/*
+!kangdigital_web/storage/framework/views/.gitkeep
+kangdigital_web/storage/logs/*
+!kangdigital_web/storage/logs/.gitkeep
+kangdigital_web/public/storage
+
+# Flutter - Mobile POS gitignore
+rozitech_pos/.dart_tool/
+rozitech_pos/build/
+rozitech_pos/.flutter-plugins
+rozitech_pos/.flutter-plugins-dependencies
+rozitech_pos/.packages
+rozitech_pos/pubspec.lock
+
+# Flutter Android/iOS build files
+rozitech_pos/android/local.properties
+rozitech_pos/android/key.properties
+rozitech_pos/ios/Flutter/Generated.xcconfig
+rozitech_pos/ios/Flutter/flutter_export_environment.sh
+
+# IDEs & System files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+Thumbs.db
