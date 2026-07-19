@@ -224,12 +224,12 @@ class _PaymentSelectorPageState extends ConsumerState<PaymentSelectorPage> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
+                const Row(
                   children: [
-                    const Icon(Icons.change_circle_rounded,
+                    Icon(Icons.change_circle_rounded,
                         color: Colors.green),
-                    const SizedBox(width: 8),
-                    const Text(
+                    SizedBox(width: 8),
+                    Text(
                       'Kembalian:',
                       style: TextStyle(fontWeight: FontWeight.w600),
                     ),
@@ -558,7 +558,8 @@ class _PaymentSelectorPageState extends ConsumerState<PaymentSelectorPage> {
               final profile = await settingsRepo.getStoreProfile();
 
               await txResult.fold(
-                (failure) async => debugPrint('Gagal mengambil transaksi untuk auto-print: ${failure.message}'),
+                (failure) async =>
+                    debugPrint('Gagal mengambil transaksi untuk auto-print: $failure'),
                 (transaction) async {
                   final printService = ref.read(printServiceProvider.notifier);
                   final storeName = profile['store_name'] ?? 'Toko Saya';

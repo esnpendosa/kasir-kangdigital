@@ -4,9 +4,11 @@ import '../../../../core/database/database_provider.dart';
 import '../../../../core/services/cash_drawer_service.dart';
 import '../../../../core/services/notification_service.dart';
 import '../../../../core/utils/extensions.dart';
+import '../../../../core/utils/qris_dynamic_converter.dart';
 import '../../../products/data/repositories/product_repository.dart';
 import '../../../sales/data/repositories/cart_repository.dart';
 import '../../../sales/presentation/widgets/pos_numpad.dart';
+import '../../../settings/data/repositories/settings_repository_impl.dart';
 import '../../domain/entities/payment_method_config.dart';
 import 'payment_method_selector.dart';
 import 'qris_payment_dialog.dart';
@@ -333,20 +335,55 @@ class _PaymentProcessingSheetState
   Future<void> _confirm(CartState cart) async {
     setState(() => _isProcessing = true);
 
-    // For QRIS/gateway payments, show the QR dialog first
+    // For QRIS/e-wallet payments, resolve the real NMID and show QR dialog
     if (_selectedType == PaymentType.qrisDynamic ||
         _selectedType == PaymentType.midtrans ||
         _selectedType == PaymentType.qopay ||
         _selectedType == PaymentType.shopee) {
-      final mockPayload =
-          'https://qris.id/0002ID.CO.KASIRKITA.CASIR01189360000'
-          '12345601303AMOUNT${cart.total.toInt()}';
+      // Bug fix: Read the real qris_nmid from settings instead of using a
+      // hardcoded mock payload that would produce an invalid / unscannable QR.
+      final db = ref.read(databaseProvider);
+      final settingsRepo = SettingsRepositoryImpl(db);
+      final profile = await settingsRepo.getStoreProfile();
+      final qrisNmid = profile['qris_nmid'] ?? '';
+
+      if (!mounted) return;
+
+      if (qrisNmid.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'NMID QRIS belum diisi. Silakan atur di Pengaturan → QRIS.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        setState(() => _isProcessing = false);
+        return;
+      }
+
+      String qrPayload;
+      try {
+        qrPayload = QrisDynamicConverter.convert(qrisNmid, cart.total);
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                'QRIS tidak valid: $e\nPastikan NMID adalah kode QRIS lengkap.'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 6),
+          ),
+        );
+        setState(() => _isProcessing = false);
+        return;
+      }
+
       if (!mounted) return;
       final confirmed = await showDialog<bool>(
         context: context,
         barrierDismissible: false,
         builder: (_) => QrisPaymentDialog(
-          qrString: mockPayload,
+          qrString: qrPayload,
           amount: cart.total,
         ),
       );
@@ -370,12 +407,18 @@ class _PaymentProcessingSheetState
     if (!mounted) return;
     setState(() => _isProcessing = false);
 
+    // Bug fix: capture ScaffoldMessenger before the async gap to avoid
+    // using BuildContext across async gaps after widget may be unmounted.
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+
     result.fold(
       onSuccess: (txId) async {
-        // Send notification
-        await NotificationService.instance.showPaymentNotification(
-          'Pembayaran Berhasil',
-          'Transaksi ${cart.total.toCurrency()} telah berhasil.',
+        // Bug fix: use showPaymentSuccess (takes invoiceNo + amount)
+        // instead of the wrong showPaymentNotification call.
+        await NotificationService.instance.showPaymentSuccess(
+          'TRX-$txId',
+          cart.total,
         );
 
         // Open cash drawer only for cash payments
@@ -384,18 +427,16 @@ class _PaymentProcessingSheetState
           await CashDrawerService.openCashDrawer();
         }
 
-        if (mounted) {
-          Navigator.of(context).pop(); // close sheet
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Transaksi #$txId berhasil!'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
+        navigator.pop(); // close sheet
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('Transaksi #$txId berhasil!'),
+            backgroundColor: Colors.green,
+          ),
+        );
       },
       onFailure: (msg, _) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           SnackBar(
             content: Text(msg),
             backgroundColor: Colors.red,

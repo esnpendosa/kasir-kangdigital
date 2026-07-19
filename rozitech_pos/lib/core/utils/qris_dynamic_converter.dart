@@ -51,16 +51,14 @@ class QrisDynamicConverter {
     // Replace only the first occurrence at the very beginning of the string
     // to avoid replacing matching bytes inside Merchant Account Info payloads.
     if (body.startsWith('000201010211')) {
-      body = '000201010212' + body.substring('000201010211'.length);
+      body = '000201010212${body.substring('000201010211'.length)}';
     } else if (body.startsWith('000201010212')) {
       // already dynamic — leave as-is
     } else {
       // Graceful fallback: find "010211" within the first 20 chars only
       final initIdx = body.indexOf('010211');
       if (initIdx != -1 && initIdx <= 8) {
-        body = body.substring(0, initIdx) +
-            '010212' +
-            body.substring(initIdx + 6);
+        body = '${body.substring(0, initIdx)}010212${body.substring(initIdx + 6)}';
       }
     }
 
